@@ -1,0 +1,9 @@
+*~
+*#
+.#*
+._*
+*.pyc
+*-env/*
+logs/*
+local_*
+*DS_Store*
