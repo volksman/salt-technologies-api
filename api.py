@@ -1,29 +1,9 @@
-# import httplib, urllib
-# from urlparse import urlparse, parse_qsl
-
-# # connection parameters to the Admeris IOP gateway
-# URL = 'https://test.admeris.com/store/checkout/iopproxy.jsp'
-# parms = {
-#     'merchantId':  '50641',
-#     'storeId': '12155',
-#     'apiToken': 'q0rmRTSTuYwmNjbV'
-#     }
-
-# def verify(tid):
-#     url = urlparse(URL)
-#     conn = httplib.HTTPSConnection(url[1])
-#     parms.update({'transactionId': tid, "txnType": "Verify"})
-#     conn.request("POST", url[2], urllib.urlencode(parms),
-#                  {"Content-type": "application/x-www-form-urlencoded"})
-
-#     return dict(parse_qsl(conn.getresponse().read()))
-
 import logging
 import requests
 import time
 import sys
 
-logger = logging.getLogger('salt_log')
+logger = logging.getLogger('salt_api')
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler(sys.stderr))
 
@@ -117,7 +97,7 @@ class Salt(object):
         Args:
             apikey (str): provide your Salt API key, required
             merchant_id (str): provide your Salt Merchat ID, required
-            debug (bool): set True to log to "salt_log" logger at INFO level
+            debug (bool): set True to log to "salt_api" logger at INFO level
         """
 
         self.session = requests.session()
@@ -141,6 +121,7 @@ class Salt(object):
             ROOT = url
 
         self.credit_card_verification = CreditCardVerification(self)
+        self.single_purchase = SinglePurchase(self)
 
     def call(self, params=None):
         """ Actually make the API call with the given params - this should only
@@ -199,15 +180,89 @@ class Salt(object):
         """
 
         if result['ERROR_MESSAGE'] in ERROR_MAP:
-           return ERROR_MAP[result['ERROR_MESSAGE']](result['DEBUG_MESSAGE'])
-        return Error(result['DEBUG_MESSAGE'])
+           return ERROR_MAP[result['ERROR_MESSAGE']](result['ERROR_MESSAGE'])
+        return Error(result['ERROR_MESSAGE'])
 
     def log(self, *args, **kwargs):
-        '''Proxy access to the mailchimp logger, changing the level based on the debug setting'''
+        '''Proxy access to the salt_api logger, changing the level based on the debug setting'''
         logger.log(self.level, *args, **kwargs)
 
     def __repr__(self):
         return '<SaltAPI %s - %s>' % (self.apikey, self.merchant_id)
+
+class SinglePurchase(object):
+    """ Run a one-time charge against a credit card """
+
+    def __init__(self, master):
+        self.master = master
+
+    def charge(self, amount, order_id, *args, **kwargs):
+        """ passed either a storage ID or a CC to run a single charge against
+
+        Args:
+            amount (dec): amount to be charged
+
+            Either:
+            credit_card_number (int)
+            expiry_date (int)
+
+            OR:
+            storage_token_id (int)
+
+        Optional Args:
+            cvv (int)
+            order_id (str)
+            market_segment_code (str): defaults to I
+            avs_request_code (int): defaults to 0
+            cvv2_request_code (int): defaults to 0
+
+        """
+        _params = {
+            'requestCode': 'singlePurchase',
+            'amount': amount,
+            'orderId': order_id
+        }
+
+        credit_card_number = kwargs.get('credit_card_number', None)
+        expiry_date = kwargs.get('expiry_date', None)
+        storage_token_id = kwargs.get('storage_token_id', None)
+
+        if credit_card_number and expiry_date and storage_token_id:
+            raise Error('Only provide CC and Exp OR StorageID not both')
+
+        if not storage_token_id and not credit_card_number and not expiry_date:
+            raise Error('Need to provide a CC and Exp or StorageID')
+
+        if storage_token_id:
+            _params['storageTokenId'] = storage_token_id
+        else:
+            _params['creditCardNumber'] = credit_card_number
+            _params['expiryDate'] = expiry_date
+
+        _params['zip'] = kwargs.get('zip', '')
+        _params['street'] = kwargs.get('street', '')
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+        _params['avsRequestCode'] = kwargs.get('avs_request_code', 0)
+        _params['cvv2RequestCode'] = kwargs.get('cvv2_request_code', 0)
+
+        # requestCode=singlePurchase&
+        # merchantId=3503571&
+        # apiToken=ae04bd35f8e9747308a5fbf14b087746&
+        # marketSegmentCode=I&
+        # creditCardNumber=4111111111111111&
+        # expiryDate=1231&
+        # avsRequestCode=0&
+        # cvv2RequestCode=0&
+        # zip=123123&
+        # street=123%20Street&
+        # amount=40000&
+        # orderId=123
+
+        self.cvv = kwargs.get('cvv', None)
+        if self.cvv:
+            _params['cvv'] = self.cvv
+
+        return self.master.call(_params)
 
 class CreditCardVerification(object):
     """ Verify a CC number """
