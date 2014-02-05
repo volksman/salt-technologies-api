@@ -68,7 +68,8 @@ ERROR_MAP = {
     'C109_INVALID_TOTAL_NUMBER_INSTALLMENTS': InvalidTotalNumberInstallments,
     'C110_TRANSACTION_EXCEEDS_ACCOUNT_LIMITS': TransactionExceedsAccountLimits,
     'C111_TRANSACTION_DOES_NOT_EXIST': TransactionDoesNotExist,
-    'C112_PERIODIC_PURCHASE_COMPLETE_OR_CANCELLED': PeriodicPurchaseCompleteOrCancelled,
+    'C112_PERIODIC_PURCHASE_COMPLETE_OR_CANCELLED':
+        PeriodicPurchaseCompleteOrCancelled,
     'C200_INVALID_CREDIT_CARD_NUMBER': InvalidCreditCardNumber,
     'C201_INVALID_CREDIT_CARD_EXPIRY_DATE': InvalidCreditCardExpiryDate,
     'C202_INVALID_CREDIT_CARD_CVV2_FORMAT': InvalidCreditCardCVV2Format,
@@ -115,19 +116,14 @@ class Salt(object):
         self.merchant_id = merchant_id
 
         global ROOT
-        if url is None and ROOT is None: raise Error('You must provide a Salt API root endpoint')
+        if url is None and ROOT is None:
+            raise Error('You must provide a Salt API root endpoint')
 
         if url is not None:
             ROOT = url
 
-        self.credit_card_verification = CreditCardVerification(self)
-        self.single_purchase = SinglePurchase(self)
-
     def call(self, params=None):
-        """ Actually make the API call with the given params - this should only
-        be called by the namespace methods - use the helpers in regular usage
-        like m.helper.ping()
-        """
+        """ Actually make the API call with the given params """
 
         if params is None: params = {}
 
@@ -170,8 +166,9 @@ class Salt(object):
             'time': complete_time
         }
 
-        if response.status_code != requests.codes.ok or response_body['ERROR_MESSAGE'] != 'SUCCESS':
-            raise self.cast_error(response_body)
+        if response.status_code != requests.codes.ok or \
+            response_body['ERROR_MESSAGE'] != 'SUCCESS':
+                raise self.cast_error(response_body)
         return response_body
 
     def cast_error(self, result):
@@ -184,20 +181,18 @@ class Salt(object):
         return Error(result['ERROR_MESSAGE'])
 
     def log(self, *args, **kwargs):
-        '''Proxy access to the salt_api logger, changing the level based on the debug setting'''
+        """ Proxy access to the salt_api logger, changing the level based on the
+        debug setting
+        """
         logger.log(self.level, *args, **kwargs)
 
     def __repr__(self):
         return '<SaltAPI %s - %s>' % (self.apikey, self.merchant_id)
 
-class SinglePurchase(object):
-    """ Run a one-time charge against a credit card """
-
-    def __init__(self, master):
-        self.master = master
-
-    def charge(self, amount, order_id, *args, **kwargs):
-        """ passed either a storage ID or a CC to run a single charge against
+    # Simple single function wrappers
+    def single_purchase(self, amount, order_id, *args, **kwargs):
+        """ The singlePurchase method runs a one-time charge against a credit
+        card.
 
         Args:
             amount (dec): amount to be charged
@@ -245,33 +240,90 @@ class SinglePurchase(object):
         _params['avsRequestCode'] = kwargs.get('avs_request_code', 0)
         _params['cvv2RequestCode'] = kwargs.get('cvv2_request_code', 0)
 
-        # requestCode=singlePurchase&
-        # merchantId=3503571&
-        # apiToken=ae04bd35f8e9747308a5fbf14b087746&
-        # marketSegmentCode=I&
-        # creditCardNumber=4111111111111111&
-        # expiryDate=1231&
-        # avsRequestCode=0&
-        # cvv2RequestCode=0&
-        # zip=123123&
-        # street=123%20Street&
-        # amount=40000&
-        # orderId=123
-
         self.cvv = kwargs.get('cvv', None)
         if self.cvv:
             _params['cvv'] = self.cvv
 
-        return self.master.call(_params)
+        return self.call(_params)
 
-class CreditCardVerification(object):
-    """ Verify a CC number """
+    def void(self, transaction_id, transaction_order_id, **kwargs):
+        """ Cancels a transaction, preventing it from being settled. A Void can
+        only be performed on a transaction belonging to the current batch,
+        before the current batch is closed (i.e. before the end of day).
 
-    def __init__(self, master):
-        self.master = master
+        Args:
+            transaction_id (int)
+            transaction_order_id (str)
 
-    def verify(self, credit_card_number, expiry_date, zipcode, street, **kwargs):
-        """ This call will validate a CC.
+        Optional Args:
+            market_segment_code (str): defaults to I
+
+        """
+
+        _params = {
+            'requestCode': 'void',
+            'transactionId': transaction_id,
+            'transaction_order_id': transaction_order_id,
+        }
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.call(_params)
+
+    def refund(self, transaction_id, transaction_order_id, order_id, amount,
+        **kwargs):
+        """ Returns funds from a previously settled purchase to the customer.
+        Refunds can only be performed on a purchase that is part of an
+        already-closed batch.
+
+        Args:
+            transaction_id (int)
+            transaction_order_id (str)
+            order_id (str)
+            amount (int)
+
+        Optional Args:
+            market_segment_code (str): defaults to I
+
+        """
+
+        _params = {
+            'requestCode': 'refund',
+            'transactionId': transaction_id,
+            'transactionOrderId': transaction_order_id,
+            'orderId': order_id,
+            'amount': amount
+        }
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.call(_params)
+
+    def transaction_verification(self, transaction_id, **kwargs):
+        """ In certain cases when you are unsure of the results of the
+        transaction, such as when a transaction times out, you may need to
+        double-check its status.
+
+        Args:
+            transaction_id (int)
+
+        Optional Args:
+            market_segment_code (str): defaults to I
+
+        """
+
+        _params = {
+            'requestCode': 'verifyTransaction',
+            'transactionId': transaction_id
+        }
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.call(_params)
+
+    def credit_card_verification(self, credit_card_number, expiry_date, zipcode,
+        street, **kwargs):
+        """ Use a verifyCreditCard request to check the status of a credit card.
+        The returned receipt will contain information about the card's validity,
+        Secure Storage information if the card uses Secure Storage and Fraud
+        information if the card uses the Advanced Fraud Suite.
 
         Args:
             credit_card_number (int): a credit card PAN
@@ -300,5 +352,99 @@ class CreditCardVerification(object):
         self.cvv = kwargs.get('cvv', None)
         if self.cvv:
             _params['cvv'] = self.cvv
+
+        return self.call(_params)
+
+    def batch_closure(self, **kwargs):
+        """ All batches are closed automatically every night at 12:00 am EST.
+        If for some reason you want to close a batch manually during the day,
+        this may be done with a batch request. Note that this will NOT prevent
+        the automatic daily batch closure.
+
+        Optional Args:
+            market_segment_code (str): defaults to I
+
+        """
+
+        _params = {
+            'requestCode': 'batch',
+            'operationCode': 'close'
+        }
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.call(_params)
+
+    def fraud(self, transaction_id, fraud_session_id, auth, **kwargs):
+        """ Allow merchants to update fraud AUTH status if they use other
+        payment processing service.
+
+        Args:
+            transaction_id (int)
+            fraud_session_id (int)
+            auth (int)
+
+        Optional Args:
+            market_segment_code (str): defaults to I
+
+        """
+
+        _params = {
+            'requestCode': 'fraudUpdate',
+            'transactionId': transaction_id,
+            'fraudSessionId': fraud_session_id,
+            'auth': auth
+        }
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.call(_params)
+
+
+class SecureStorage(object):
+    """ With the Secure Storage API, merchants can remotely store credit card
+    and other sensitive customer data with SALT to increase security and reduce
+    the scope of PCI Compliance.
+
+    When information is stored with SALT, a 'Storage Token' (which identifies
+    the information in secure storage) is returned in response. This Storage
+    Token can be used for all subsequent transactions including purchases and
+    credit card verification.
+    """
+
+    def __init__(self, master):
+        self.master = master
+
+    def create(self, credit_card_number, expiry_date, storage_token_id,
+        profile_first_name, profile_last_name, profile_phone_number,
+        profile_address, profile_postal, *args, **kwargs):
+        """ Create a storage profile
+
+        Args:
+            storage_token_id (str)
+            credit_card_number (int)
+            expiry_date (int)
+            profile_first_name (str)
+            profile_last_name (str)
+            profile_phone_number (str)
+            profile_address (str)
+            profile_postal (str)
+
+        Optional Args:
+            market_segment_code (str): defaults to I
+
+        """
+        _params = {
+            'requestCode': 'secureStorage',
+            'operationCode': 'create',
+            'storageTokenId': storage_token_id,
+            'creditCardNumber': credit_card_number,
+            'expiryDate': expiry_date,
+            'profileFirstName': profile_first_name,
+            'profileLastName': profile_last_name,
+            'profilePhoneNumber': profile_phone_number,
+            'profileAddress1': profile_address,
+            'profilePostal': profile_postal
+        }
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
 
         return self.master.call(_params)
