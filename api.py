@@ -91,6 +91,26 @@ ERROR_MAP = {
     'C402_REVIEW_FROM_FRAUD_PROVIDER': ReviewFromFraudProvider,
 }
 
+def _get_cc_or_id(*args, **kwargs):
+    credit_card_number = kwargs.get('credit_card_number', None)
+    expiry_date = kwargs.get('expiry_date', None)
+    storage_token_id = kwargs.get('storage_token_id', None)
+
+    if credit_card_number and expiry_date and storage_token_id:
+        raise Error('Only provide CC and Exp OR StorageID not both')
+
+    if not storage_token_id and not credit_card_number and not expiry_date:
+        raise Error('Need to provide a CC and Exp or StorageID')
+
+    if storage_token_id:
+        return { 'storageTokenId': storage_token_id }
+    else:
+        return {
+            'creditCardNumber': credit_card_number,
+            'expiry_date': expiry_date
+        }
+    raise Error('No CC or Storage info found')
+
 class Salt(object):
     def __init__(self, apikey=None, merchant_id=None, url=None, debug=False):
         """ initialize the API client
@@ -121,6 +141,9 @@ class Salt(object):
 
         if url is not None:
             ROOT = url
+
+        self.recuring_purchase = RecurringPurchase(self)
+        self.secure_storage = SecureStorage(self)
 
     def call(self, params=None):
         """ Actually make the API call with the given params """
@@ -177,7 +200,7 @@ class Salt(object):
         """
 
         if result['ERROR_MESSAGE'] in ERROR_MAP:
-           return ERROR_MAP[result['ERROR_MESSAGE']](result['ERROR_MESSAGE'])
+            return ERROR_MAP[result['ERROR_MESSAGE']](result['ERROR_MESSAGE'])
         return Error(result['ERROR_MESSAGE'])
 
     def log(self, *args, **kwargs):
@@ -218,27 +241,15 @@ class Salt(object):
             'orderId': order_id
         }
 
-        credit_card_number = kwargs.get('credit_card_number', None)
-        expiry_date = kwargs.get('expiry_date', None)
-        storage_token_id = kwargs.get('storage_token_id', None)
-
-        if credit_card_number and expiry_date and storage_token_id:
-            raise Error('Only provide CC and Exp OR StorageID not both')
-
-        if not storage_token_id and not credit_card_number and not expiry_date:
-            raise Error('Need to provide a CC and Exp or StorageID')
-
-        if storage_token_id:
-            _params['storageTokenId'] = storage_token_id
-        else:
-            _params['creditCardNumber'] = credit_card_number
-            _params['expiryDate'] = expiry_date
+        cc_meta = _get_cc_or_id(kwargs)
 
         _params['zip'] = kwargs.get('zip', '')
         _params['street'] = kwargs.get('street', '')
         _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
         _params['avsRequestCode'] = kwargs.get('avs_request_code', 0)
         _params['cvv2RequestCode'] = kwargs.get('cvv2_request_code', 0)
+
+        _params = dict(_params.items() + cc_meta.items())
 
         self.cvv = kwargs.get('cvv', None)
         if self.cvv:
@@ -398,7 +409,6 @@ class Salt(object):
 
         return self.call(_params)
 
-
 class SecureStorage(object):
     """ With the Secure Storage API, merchants can remotely store credit card
     and other sensitive customer data with SALT to increase security and reduce
@@ -443,6 +453,120 @@ class SecureStorage(object):
             'profilePhoneNumber': profile_phone_number,
             'profileAddress1': profile_address,
             'profilePostal': profile_postal
+        }
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.master.call(_params)
+
+class RecurringPurchase(object):
+    """ You can use SALT’s Recurring Payment feature when the customer is
+    billed periodically, or when splitting payment into a number of
+    separate payments.
+    """
+
+    def __init__(self, master):
+        self.master = master
+
+    def _create_update_params(amount, periodic_purchase_state_code,
+        periodic_purchase_schedule_type_code, periodic_purchase_interval_length,
+        order_id, start_date, end_date, next_payment_date,
+        credit_card_number, expiry_date, kws):
+
+        _params = {
+            'requestCode': 'recurringPurchase',
+            'operationCode': 'create',
+            'amount': amount,
+            'periodicPurchaseStateCode': periodic_purchase_state_code,
+            'periodicPurchaseScheduleTypeCode':
+                periodic_purchase_schedule_type_code,
+            'periodicPurchaseIntervalLength': periodic_purchase_interval_length,
+            'orderId': order_id,
+            'startDate': start_date,
+            'endDate': end_date,
+            'nextPaymentDate': next_payment_date,
+        }
+
+        _params['customerId'] = kws.get('customer_id', '')
+        _params['marketSegmentCode'] = kws.get('market_segment_code', 'I')
+        _params['avsRequestCode'] = kws.get('avs_request_code', 0)
+        _params['cvv2RequestCode'] = kws.get('cvv2_request_code', 0)
+
+        cc_meta = _get_cc_or_id(kws)
+        _params = dict(_params.items() + cc_meta.items())
+
+        return _params
+
+    def create(self, amount, periodic_purchase_state_code,
+        periodic_purchase_schedule_type_code, periodic_purchase_interval_length,
+        order_id, start_date, end_date, next_payment_date,
+        credit_card_number, expiry_date, **kwargs):
+
+        _params = self._create_update_params(amount,
+            periodic_purchase_state_code, periodic_purchase_schedule_type_code,
+            periodic_purchase_interval_length, order_id, start_date, end_date,
+            next_payment_date, credit_card_number, expiry_date, kwargs)
+
+        _params['operationCode'] = 'create'
+
+        return self.master.call(_params)
+
+    def update(self, amount, periodic_purchase_state_code,
+        periodic_purchase_schedule_type_code, periodic_purchase_interval_length,
+        order_id, start_date, end_date, next_payment_date,
+        credit_card_number, expiry_date, **kwargs):
+
+        _params = self._create_update_params(amount,
+            periodic_purchase_state_code, periodic_purchase_schedule_type_code,
+            periodic_purchase_interval_length, order_id, start_date, end_date,
+            next_payment_date, credit_card_number, expiry_date, kwargs)
+
+        _params['operationCode'] = 'update'
+
+        return self.master.call(_params)
+
+    def execute(self, order_id, cvv, **kwargs):
+        _params = {
+            'requestCode': 'recurringPurchase',
+            'operationCode': 'execute',
+            'orderId': order_id,
+            'cvv2': cvv
+        }
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.master.call(_params)
+
+    def hold(self, order_id, **kwargs):
+        _params = {
+            'requestCode': 'recurringPurchase',
+            'operationCode': 'update',
+            'orderId': order_id,
+            'periodicPurchaseStateCode': 3
+        }
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.master.call(_params)
+
+    def resume(self, order_id, **kwargs):
+        _params = {
+            'requestCode': 'recurringPurchase',
+            'operationCode': 'update',
+            'orderId': order_id,
+            'periodicPurchaseStateCode': 1
+        }
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.master.call(_params)
+
+    def cancel(self, order_id, **kwargs):
+        _params = {
+            'requestCode': 'recurringPurchase',
+            'operationCode': 'update',
+            'orderId': order_id,
+            'periodicPurchaseStateCode': 4
         }
 
         _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
