@@ -423,36 +423,91 @@ class SecureStorage(object):
     def __init__(self, master):
         self.master = master
 
-    def create(self, credit_card_number, expiry_date, storage_token_id,
-        profile_first_name, profile_last_name, profile_phone_number,
-        profile_address, profile_postal, *args, **kwargs):
+    def _get_params(self, action, storage_token_id, credit_card_number, expiry_date,
+        kwargs):
+        _params = {
+            'requestCode': 'secureStorage',
+            'operationCode': action,
+            'storageTokenId': storage_token_id,
+            'creditCardNumber': credit_card_number,
+            'expiryDate': expiry_date,
+        }
+
+        if 'profile_first_name' in kwargs:
+            _params['profileFirstName'] = kwargs['profile_first_name']
+
+        if 'profile_last_name' in kwargs:
+            _params['profileLastName'] = kwargs['profile_last_name']
+
+        if 'profile_phone_number' in kwargs:
+            _params['profilePhoneNumber'] = kwargs['profile_phone_number']
+
+        if 'profile_address' in kwargs:
+            _params['profileAddress1'] = kwargs['profile_address']
+
+        if 'profile_postal' in kwargs:
+            _params['profilePostal'] = kwargs['profile_postal']
+
+        if 'profile_city' in kwargs:
+            _params['profileCity'] = kwargs['profile_city']
+
+        if 'profile_country' in kwargs:
+            _params['profileCoutry'] = kwargs['profile_country']
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return _params
+
+    def create(self, storage_token_id, credit_card_number, expiry_date,
+        **kwargs):
         """ Create a storage profile
 
         Args:
             storage_token_id (str)
             credit_card_number (int)
             expiry_date (int)
+
+        Optional Args:
+            market_segment_code (str): defaults to I
             profile_first_name (str)
             profile_last_name (str)
             profile_phone_number (str)
             profile_address (str)
             profile_postal (str)
-
-        Optional Args:
-            market_segment_code (str): defaults to I
+            profile_city (str)
+            profile_country (str)
 
         """
+        _params = self._get_params('create', storage_token_id,
+            credit_card_number, expiry_date, kwargs)
+
+        return self.master.call(_params)
+
+    def update(self, storage_token_id, credit_card_number, expiry_date, *args,
+        **kwargs):
+
+        """ Update a storage profile """
+        _params = self._get_params('update', storage_token_id, credit_card_number, expiry_date,
+            kwargs)
+        return self.master.call(_params)
+
+    def delete(self, storage_token_id, *args, **kwargs):
+        """ Delete a storage profile """
         _params = {
             'requestCode': 'secureStorage',
-            'operationCode': 'create',
+            'operationCode': 'delete',
             'storageTokenId': storage_token_id,
-            'creditCardNumber': credit_card_number,
-            'expiryDate': expiry_date,
-            'profileFirstName': profile_first_name,
-            'profileLastName': profile_last_name,
-            'profilePhoneNumber': profile_phone_number,
-            'profileAddress1': profile_address,
-            'profilePostal': profile_postal
+        }
+
+        _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
+
+        return self.master.call(_params)
+
+    def query(self, storage_token_id, *args, **kwargs):
+        _params = {
+            'requestCode': 'secureStorage',
+            'operationCode': 'query',
+            'storageTokenId': storage_token_id,
         }
 
         _params['marketSegmentCode'] = kwargs.get('market_segment_code', 'I')
@@ -460,7 +515,7 @@ class SecureStorage(object):
         return self.master.call(_params)
 
 class RecurringPurchase(object):
-    """ You can use SALT’s Recurring Payment feature when the customer is
+    """ You can use SALT's Recurring Payment feature when the customer is
     billed periodically, or when splitting payment into a number of
     separate payments.
     """
