@@ -91,7 +91,7 @@ ERROR_MAP = {
     'C402_REVIEW_FROM_FRAUD_PROVIDER': ReviewFromFraudProvider,
 }
 
-def _get_cc_or_id(*args, **kwargs):
+def _get_cc_or_id(kwargs):
     credit_card_number = kwargs.get('credit_card_number', None)
     expiry_date = kwargs.get('expiry_date', None)
     storage_token_id = kwargs.get('storage_token_id', None)
